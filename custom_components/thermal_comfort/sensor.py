@@ -45,7 +45,7 @@ from homeassistant.helpers.template import Template
 from homeassistant.loader import async_get_custom_components
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from .const import DEFAULT_NAME, DOMAIN
+from .const import DEFAULT_NAME, DOMAIN, RUNTIME_DEVICE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -428,13 +428,19 @@ async def async_setup_entry(
             seconds=data.get(CONF_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT)
         ),
     )
+    data[RUNTIME_DEVICE] = compute_device
 
+    enabled_sensors = data.get(CONF_ENABLED_SENSORS)
     entities: list[SensorThermalComfort] = [
         SensorThermalComfort(
             device=compute_device,
             sensor_type=sensor_type,
             custom_icons=data[CONF_CUSTOM_ICONS],
-            is_enabled_default=sensor_type in data.get(CONF_ENABLED_SENSORS, {})
+            is_enabled_default=(
+                True
+                if enabled_sensors is None
+                else sensor_type in enabled_sensors
+            ),
         )
         for sensor_type in SensorType
     ]
@@ -469,7 +475,10 @@ class SensorThermalComfort(SensorEntity):
         """Initialize the sensor."""
         self._device = device
         self._sensor_type = sensor_type
-        entity_description = SENSOR_TYPES[sensor_type]
+        self._is_config_entry = is_config_entry
+        # Do not let per-entity names, icons, or enablement mutate the shared
+        # module-level description definitions.
+        entity_description = dict(SENSOR_TYPES[sensor_type])
         entity_description["translation_key"] = sensor_type
         entity_description["has_entity_name"] = True
         if not is_config_entry:
@@ -524,13 +533,29 @@ class SensorThermalComfort(SensorEntity):
         if self._device.compute_states[self._sensor_type].needs_update:
             self.async_schedule_update_ha_state(True)
 
+    async def async_will_remove_from_hass(self) -> None:
+        """Detach the entity from its shared calculation device."""
+        if self in self._device.sensors:
+            self._device.sensors.remove(self)
+        if not self._is_config_entry and not self._device.sensors:
+            self._device.async_shutdown()
+
+    @property
+    def available(self) -> bool:
+        """Return whether both source measurements are valid."""
+        return self._device.available
+
     async def async_update(self):
         """Update the state of the sensor."""
+        if not self._device.available:
+            self._attr_native_value = None
+            return
+
         value = await getattr(self._device, self._sensor_type)()
         if value is None:  # can happen during startup
             return
 
-        if type(value) == tuple and len(value) == 2:
+        if isinstance(value, tuple) and len(value) == 2:
             self._attr_extra_state_attributes.update(value[1])
             value = value[0]
 
@@ -607,17 +632,23 @@ class DeviceThermalComfort:
         self._humidity = None
         self._should_poll = should_poll
         self.sensors = []
+        self._unsub_callbacks = []
+        self._shutdown = False
         self._compute_states = {
             sensor_type: ComputeState(lock=Lock())
             for sensor_type in SENSOR_TYPES
         }
 
-        async_track_state_change_event(
-            self.hass, self._temperature_entity, self.temperature_state_listener
+        self._unsub_callbacks.append(
+            async_track_state_change_event(
+                self.hass, self._temperature_entity, self.temperature_state_listener
+            )
         )
 
-        async_track_state_change_event(
-            self.hass, self._humidity_entity, self.humidity_state_listener
+        self._unsub_callbacks.append(
+            async_track_state_change_event(
+                self.hass, self._humidity_entity, self.humidity_state_listener
+            )
         )
 
         hass.async_create_task(
@@ -632,11 +663,27 @@ class DeviceThermalComfort:
         if self._should_poll:
             if scan_interval is None:
                 scan_interval = timedelta(seconds=SCAN_INTERVAL_DEFAULT)
-            async_track_time_interval(
-                self.hass,
-                self.async_update_sensors,
-                scan_interval,
+            self._unsub_callbacks.append(
+                async_track_time_interval(
+                    self.hass,
+                    self._async_poll_update,
+                    scan_interval,
+                )
             )
+
+    def async_shutdown(self) -> None:
+        """Cancel source and polling listeners."""
+        if self._shutdown:
+            return
+        self._shutdown = True
+        for unsubscribe in self._unsub_callbacks:
+            unsubscribe()
+        self._unsub_callbacks.clear()
+
+    @property
+    def available(self) -> bool:
+        """Return whether both source measurements are valid."""
+        return self._temperature is not None and self._humidity is not None
 
     async def _set_version(self):
         self._device_info["sw_version"] = (
@@ -645,35 +692,67 @@ class DeviceThermalComfort:
 
     async def temperature_state_listener(self, event):
         """Handle temperature device state changes."""
+        if self._shutdown:
+            return
         await self._new_temperature_state(event.data.get("new_state"))
 
     async def _new_temperature_state(self, state):
+        if self._shutdown:
+            return
         if _is_valid_state(state):
-            hass = self.hass
-            unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT, hass.config.units.temperature_unit)
-            temp = util.convert(state.state, float)
-            # convert to celsius if necessary
-            temperature = TemperatureConverter.convert(temp, unit, UnitOfTemperature.CELSIUS)
-            if -89.2 <= temperature <= 56.7:
-                self.extra_state_attributes[ATTR_TEMPERATURE] = temp
-                self._temperature = temperature
-                await self.async_update()
-        else:
-            _LOGGER.info("Temperature has an invalid value: %s. Can't calculate new states.", state)
+            try:
+                unit = state.attributes.get(
+                    ATTR_UNIT_OF_MEASUREMENT,
+                    self.hass.config.units.temperature_unit,
+                )
+                temp = util.convert(state.state, float)
+                temperature = TemperatureConverter.convert(
+                    temp, unit, UnitOfTemperature.CELSIUS
+                )
+            except (TypeError, ValueError) as ex:
+                _LOGGER.warning("Could not convert temperature state %s: %s", state, ex)
+            else:
+                if -89.2 <= temperature <= 56.7:
+                    self.extra_state_attributes[ATTR_TEMPERATURE] = temp
+                    self._temperature = temperature
+                    await self.async_update()
+                    return
+
+        self._temperature = None
+        self.extra_state_attributes.pop(ATTR_TEMPERATURE, None)
+        if state is not None:
+            _LOGGER.info(
+                "Temperature has an invalid value: %s. Calculated states are unavailable.",
+                state,
+            )
+        await self.async_update_sensors(True)
 
     async def humidity_state_listener(self, event):
         """Handle humidity device state changes."""
+        if self._shutdown:
+            return
         await self._new_humidity_state(event.data.get("new_state"))
 
     async def _new_humidity_state(self, state):
+        if self._shutdown:
+            return
         if _is_valid_state(state):
             humidity = float(state.state)
             if 0 < humidity <= 100:
-                self._humidity = float(state.state)
+                self._humidity = humidity
                 self.extra_state_attributes[ATTR_HUMIDITY] = self._humidity
                 await self.async_update()
-        else:
-            _LOGGER.info("Relative humidity has an invalid value: %s. Can't calculate new states.", state)
+                return
+
+        self._humidity = None
+        self.extra_state_attributes.pop(ATTR_HUMIDITY, None)
+        if state is not None:
+            _LOGGER.info(
+                "Relative humidity has an invalid value: %s. "
+                "Calculated states are unavailable.",
+                state,
+            )
+        await self.async_update_sensors(True)
 
     @compute_once_lock(SensorType.DEW_POINT)
     async def dew_point(self) -> float:
@@ -856,7 +935,8 @@ class DeviceThermalComfort:
     @compute_once_lock(SensorType.WINTER_SCHARLAU_PERCEPTION)
     async def winter_scharlau_perception(self) -> (ScharlauPerception, dict):
         """<https://revistadechimie.ro/pdf/16%20RUSANESCU%204%2019.pdf>."""
-        tc = (0.0003 * self._humidity) + (0.1497 * self._humidity) - 7.7133
+        # Comfort temperature from Rusănescu et al.: tc = -0.0003 RH² + 0.1497 RH - 7.7133
+        tc = -0.0003 * self._humidity**2 + 0.1497 * self._humidity - 7.7133
         ish = self._temperature - tc
         if self._temperature < -5 or self._temperature > 6 or self._humidity < 40:
             perception = ScharlauPerception.OUTSIDE_CALCULABLE_RANGE
@@ -986,14 +1066,22 @@ class DeviceThermalComfort:
 
     async def async_update(self):
         """Update the state."""
+        if self._shutdown:
+            return
         if self._temperature is not None and self._humidity is not None:
             for sensor_type in SENSOR_TYPES:
                 self._compute_states[sensor_type].needs_update = True
             if not self._should_poll:
                 await self.async_update_sensors(True)
 
+    async def _async_poll_update(self, now=None) -> None:
+        """Periodic update used when polling is enabled."""
+        await self.async_update_sensors(True)
+
     async def async_update_sensors(self, force_refresh: bool = False) -> None:
         """Update the state of the sensors."""
+        if self._shutdown:
+            return
         for sensor in self.sensors:
             sensor.async_schedule_update_ha_state(force_refresh)
 

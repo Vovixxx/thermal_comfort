@@ -24,7 +24,7 @@ from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.typing import ConfigType
 
 from .config_flow import get_value
-from .const import DOMAIN, PLATFORMS, UPDATE_LISTENER
+from .const import DOMAIN, PLATFORMS, RUNTIME_DEVICE, UPDATE_LISTENER
 from .sensor import (
     CONF_CUSTOM_ICONS,
     CONF_ENABLED_SENSORS,
@@ -52,21 +52,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_SCAN_INTERVAL: get_value(entry, CONF_SCAN_INTERVAL),
         CONF_CUSTOM_ICONS: get_value(entry, CONF_CUSTOM_ICONS),
     }
-    if get_value(entry, CONF_ENABLED_SENSORS):
-        hass.data[DOMAIN][entry.entry_id][CONF_ENABLED_SENSORS] = get_value(
-            entry, CONF_ENABLED_SENSORS
-        )
+    enabled_sensors = get_value(entry, CONF_ENABLED_SENSORS)
+    if enabled_sensors is not None:
+        hass.data[DOMAIN][entry.entry_id][CONF_ENABLED_SENSORS] = enabled_sensors
         data = dict(entry.data)
-        data.pop(CONF_ENABLED_SENSORS)
-        hass.config_entries.async_update_entry(entry, data=data)
+        if CONF_ENABLED_SENSORS in data:
+            data.pop(CONF_ENABLED_SENSORS)
+            hass.config_entries.async_update_entry(entry, data=data)
 
     if entry.unique_id is None:
         # We have no unique_id yet, let's use backup.
         hass.config_entries.async_update_entry(entry, unique_id=entry.entry_id)
 
-    await hass.async_create_task(
-        hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    )
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     update_listener = entry.add_update_listener(async_update_options)
     hass.data[DOMAIN][entry.entry_id][UPDATE_LISTENER] = update_listener
     return True
@@ -81,8 +79,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove entry via user interface."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        update_listener = hass.data[DOMAIN][entry.entry_id][UPDATE_LISTENER]
-        update_listener()
+        if runtime_device := hass.data[DOMAIN][entry.entry_id].get(RUNTIME_DEVICE):
+            runtime_device.async_shutdown()
+        if update_listener := hass.data[DOMAIN][entry.entry_id].get(UPDATE_LISTENER):
+            update_listener()
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
 
@@ -103,7 +103,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
                 return {"new_unique_id": entry.unique_id.replace(LegacySensorType.SIMMER_ZONE, SensorType.SUMMER_SIMMER_PERCEPTION)}
 
         await async_migrate_entries(hass, config_entry.entry_id, update_unique_id)
-        config_entry.version = 2
+        hass.config_entries.async_update_entry(config_entry, version=2)
 
     _LOGGER.info("Migration to version %s successful", config_entry.version)
 
