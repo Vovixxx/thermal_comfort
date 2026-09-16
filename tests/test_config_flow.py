@@ -7,6 +7,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 import voluptuous as vol
 
+from custom_components.thermal_comfort.config_flow import build_schema
 from custom_components.thermal_comfort.const import (
     CONF_HUMIDITY_SENSOR,
     CONF_TEMPERATURE_SENSOR,
@@ -111,6 +112,13 @@ async def test_options_flow(hass, start_ha):
     # Verify that the options were updated
 
     assert entry.options == USER_INPUT
+
+
+async def test_options_schema_keeps_removed_sources(hass):
+    """Existing source IDs remain selectable when their states are missing."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT, entry_id="test")
+
+    assert build_schema(entry, hass) is not None
 
 
 async def test_config_flow_enabled():

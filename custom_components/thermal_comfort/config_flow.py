@@ -1,4 +1,4 @@
-"""Tests for config flows."""
+"""Config flows for thermal_comfort."""
 from __future__ import annotations
 
 import logging
@@ -363,6 +363,19 @@ def build_schema(
         registry, hass, SensorDeviceClass.TEMPERATURE, show_advanced
     )
 
+    # Keep an existing entry editable even when one of its source entities is
+    # temporarily unavailable or has been removed from Home Assistant.
+    if config_entry is not None:
+        configured_temperature = get_value(config_entry, CONF_TEMPERATURE_SENSOR)
+        configured_humidity = get_value(config_entry, CONF_HUMIDITY_SENSOR)
+        if (
+            configured_temperature
+            and configured_temperature not in temperature_sensors
+        ):
+            temperature_sensors.append(configured_temperature)
+        if configured_humidity and configured_humidity not in humidity_sensors:
+            humidity_sensors.append(configured_humidity)
+
     if not temperature_sensors or not humidity_sensors:
         return None
 
@@ -449,10 +462,10 @@ def check_input(hass: HomeAssistant, user_input: dict) -> dict:
     p_sensor = hass.states.get(user_input[CONF_HUMIDITY_SENSOR])
 
     if t_sensor is None:
-        result["base"] = "temperature_not_found"
+        result[CONF_TEMPERATURE_SENSOR] = "temperature_not_found"
 
     if p_sensor is None:
-        result["base"] = "humidity_not_found"
+        result[CONF_HUMIDITY_SENSOR] = "humidity_not_found"
 
     # ToDo: we should not trust user and check:
     #  - that CONF_TEMPERATURE_SENSOR is temperature sensor and have state_class measurement
