@@ -50,7 +50,9 @@ Home Assistant >= 2023.12.0
 
 ### Using [HACS](https://hacs.xyz/) (recommended)
 
-This integration can be installed using HACS. To do it search for Thermal Comfort in the integrations section.
+This integration can be installed using HACS. Search for Thermal Comfort in the default store, or add this GitHub repository as a custom integration.
+
+HACS installs from the repository source (branch or commit). It does not need a GitHub Release asset named `thermal_comfort.zip`.
 
 ### Manual
 
