@@ -5,9 +5,14 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.setup import async_setup_component
 
 pytest_plugins = "pytest_homeassistant_custom_component"
+
+TEMPERATURE_SENSOR_ID = "sensor.test_temperature_sensor"
+HUMIDITY_SENSOR_ID = "sensor.test_humidity_sensor"
 
 
 @pytest.fixture(autouse=True)
@@ -22,9 +27,33 @@ def calls(hass):
     return async_mock_service(hass, "test", "automation")
 
 
+def async_set_source_sensors(
+    hass, temperature: str = "25.0", humidity: str = "50.0"
+) -> None:
+    """Create the temperature and humidity source entities used by tests."""
+    hass.states.async_set(
+        TEMPERATURE_SENSOR_ID,
+        temperature,
+        {
+            "device_class": SensorDeviceClass.TEMPERATURE,
+            "unit_of_measurement": UnitOfTemperature.CELSIUS,
+        },
+    )
+    hass.states.async_set(
+        HUMIDITY_SENSOR_ID,
+        humidity,
+        {
+            "device_class": SensorDeviceClass.HUMIDITY,
+            "unit_of_measurement": PERCENTAGE,
+        },
+    )
+
+
 @pytest.fixture
 async def start_ha(hass, domains, config, caplog):
     """Do setup of integration."""
+    async_set_source_sensors(hass)
+    await hass.async_block_till_done()
     for domain, count in domains:
         with assert_setup_component(count, domain):
             assert await async_setup_component(

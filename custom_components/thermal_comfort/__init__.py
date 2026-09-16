@@ -81,8 +81,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         if runtime_device := hass.data[DOMAIN][entry.entry_id].get(RUNTIME_DEVICE):
             runtime_device.async_shutdown()
-        update_listener = hass.data[DOMAIN][entry.entry_id][UPDATE_LISTENER]
-        update_listener()
+        if update_listener := hass.data[DOMAIN][entry.entry_id].get(UPDATE_LISTENER):
+            update_listener()
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
 

@@ -17,14 +17,16 @@ async def test_setup_update_unload_entry(hass):
     """Test entry setup and unload."""
 
     hass.config_entries.async_forward_entry_setups = AsyncMock()
-    with patch.object(hass.config_entries, "async_update_entry") as p:
-        config_entry = MockConfigEntry(
-            domain=DOMAIN, data=ADVANCED_USER_INPUT, entry_id="test", unique_id=None
-        )
-        await hass.config_entries.async_add(config_entry)
-        assert p.called
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=ADVANCED_USER_INPUT,
+        entry_id="test",
+        unique_id="test",
+    )
+    with patch.object(hass.config_entries, "async_update_entry"):
+        config_entry.add_to_hass(hass)
+        assert await async_setup_entry(hass, config_entry)
 
-    assert await async_setup_entry(hass, config_entry)
     assert DOMAIN in hass.data and config_entry.entry_id in hass.data[DOMAIN]
 
     # check user input is in config
@@ -38,8 +40,6 @@ async def test_setup_update_unload_entry(hass):
     hass.config_entries.async_forward_entry_setups.assert_called_with(
         config_entry, PLATFORMS
     )
-
-    # ToDo test hass.data[DOMAIN][config_entry.entry_id][UPDATE_LISTENER]
 
     hass.config_entries.async_reload = AsyncMock()
     assert await async_update_options(hass, config_entry) is None

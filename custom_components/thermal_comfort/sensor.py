@@ -720,10 +720,11 @@ class DeviceThermalComfort:
 
         self._temperature = None
         self.extra_state_attributes.pop(ATTR_TEMPERATURE, None)
-        _LOGGER.info(
-            "Temperature has an invalid value: %s. Calculated states are unavailable.",
-            state,
-        )
+        if state is not None:
+            _LOGGER.info(
+                "Temperature has an invalid value: %s. Calculated states are unavailable.",
+                state,
+            )
         await self.async_update_sensors(True)
 
     async def humidity_state_listener(self, event):
@@ -745,11 +746,12 @@ class DeviceThermalComfort:
 
         self._humidity = None
         self.extra_state_attributes.pop(ATTR_HUMIDITY, None)
-        _LOGGER.info(
-            "Relative humidity has an invalid value: %s. "
-            "Calculated states are unavailable.",
-            state,
-        )
+        if state is not None:
+            _LOGGER.info(
+                "Relative humidity has an invalid value: %s. "
+                "Calculated states are unavailable.",
+                state,
+            )
         await self.async_update_sensors(True)
 
     @compute_once_lock(SensorType.DEW_POINT)
