@@ -31,6 +31,7 @@ This feature adds a first-class weather-entity source that produces the same the
 - Using weather `dew_point` or `apparent_temperature` instead of calculating our own.
 - Recording forecast attributes in the recorder (forecasts are future-valued and high-cardinality).
 - Fetching forecasts more often than the weather entity updates (or the existing poll interval).
+- A custom Lovelace card, a new `weather` platform entity, or extra `*_forecast` sensors. The built-in weather-forecast card only accepts `weather.*` entities; v1 does not add one.
 
 ## Approaches considered
 
@@ -39,7 +40,7 @@ This feature adds a first-class weather-entity source that produces the same the
 Add an optional weather-entity source. Current sensors stay the same entities (`dew_point`, `heat_index`, …). Each sensor gains a `forecast` extra state attribute: a list of `{datetime, temperature, humidity, value, …}` dicts.
 
 - **Pros:** No entity explosion (still one virtual device and the same 16 sensor types). Automations and custom cards can read `state_attr('sensor.outside_heat_index', 'forecast')`. Matches how weather entities themselves used to expose forecasts.
-- **Cons:** Native HA history graphs cannot plot the future; users who want a chart use a custom card or a template.
+- **Cons:** Native HA history graphs cannot plot the future. The built-in weather-forecast card cannot render these sensors. Viewing is More Info, entity-attribute rows for the next period, and a documented Markdown table (see [Viewing](#viewing)).
 
 ### B. Weather source for current values only
 
@@ -80,6 +81,7 @@ Create additional sensors such as `heat_index_forecast` whose state is the next 
               ▼                 ▼                 ▼
         dew_point          heat_index      frost_risk  …
         state: current     state: current  state: current
+        forecast_next      forecast_next   forecast_next
         forecast: [...]    forecast: [...] forecast: [...]
 ```
 
@@ -182,9 +184,11 @@ For each forecast dict:
 
 ### Attribute shape
 
-Each thermal-comfort sensor adds:
+Each weather-mode thermal-comfort sensor adds:
 
 ```yaml
+forecast_next: 24.12
+forecast_next_datetime: "2026-09-16T15:00:00+00:00"
 forecast:
   - datetime: "2026-09-16T15:00:00+00:00"
     temperature: 26.0          # weather presentation unit
@@ -195,13 +199,97 @@ forecast:
 
 `datetime` is copied from the weather forecast (`datetime` key). Periods without `datetime` are skipped.
 
+`forecast_next` / `forecast_next_datetime` are `forecast[0].value` / `forecast[0].datetime`. If `forecast` is empty, omit both keys (do not set `None`).
+
 Device-level extra attribute `forecast_type` records the resolved type (`hourly` / `daily` / `twice_daily`) or is omitted when no forecast is available.
 
-Sensor-mode devices do not set `forecast` (no attribute, not an empty list).
+Sensor-mode devices do not set `forecast`, `forecast_next`, or `forecast_next_datetime`.
 
 ### Recorder
 
-Mark `forecast` as unrecorded on `SensorThermalComfort` via `_unrecorded_attributes = frozenset({"forecast"})` so hourly lists do not inflate the database.
+Mark forecast attributes as unrecorded on `SensorThermalComfort`:
+
+```python
+_unrecorded_attributes = frozenset({
+    "forecast",
+    "forecast_next",
+    "forecast_next_datetime",
+})
+```
+
+Hourly lists and sliding "next" values must not inflate the database.
+
+## Viewing
+
+Home Assistant has no built-in card that turns a sensor's `forecast` list into a weather-style strip. The stock **Weather forecast** card only accepts `weather.*` entities. v1 therefore ships three views, all using Approach A data — no extra entities.
+
+```text
+┌─────────────────────────────────────────────┐
+│  Heat index                        28.3 °C  │  ← entity state = current
+│  Next                              31.1 °C  │  ← type: attribute / forecast_next
+│  Next at            2026-09-16T16:00:00Z    │  ← forecast_next_datetime
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│  When (local)          Heat index           │  ← Markdown card looping forecast
+│  4:00 PM               31.1                 │
+│  5:00 PM               29.4                 │
+│  6:00 PM               27.0                 │
+└─────────────────────────────────────────────┘
+```
+
+### 1. More Info (automatic)
+
+Opening any weather-mode sensor shows `forecast`, `forecast_next`, and `forecast_next_datetime` in the attributes panel. This is the zero-config view. A 48-row hourly list is readable, not pretty.
+
+### 2. Entities card — current vs next (built-in Lovelace)
+
+`forecast_next` is a scalar, so the stock entities card `type: attribute` row can show it next to the current state. No templates, no HACS.
+
+```yaml
+type: entities
+title: Outside heat index
+entities:
+  - entity: sensor.outside_heat_index
+    name: Now
+  - type: attribute
+    entity: sensor.outside_heat_index
+    attribute: forecast_next
+    name: Next
+  - type: attribute
+    entity: sensor.outside_heat_index
+    attribute: forecast_next_datetime
+    name: Next at
+```
+
+Repeat for any other enabled index (`dew_point`, `frost_risk`, perception sensors, …). Perception sensors use the same pattern; `forecast_next` is the perception string.
+
+### 3. Markdown table — full horizon (built-in Lovelace)
+
+Document this copy-paste card in `documentation/yaml.md`. It is the v1 full-horizon view.
+
+```yaml
+type: markdown
+title: Outside heat index forecast
+content: |
+  | When | Heat index |
+  | --- | --- |
+  {% for item in state_attr('sensor.outside_heat_index', 'forecast') or [] %}
+  | {{ as_datetime(item.datetime).astimezone().strftime('%-I:%M %p') }} | {{ item.value | round(1) }} |
+  {% endfor %}
+```
+
+For perception sensors, drop `| round(1)` and print `item.value` as text.
+
+### Out of scope for v1 (follow-ups)
+
+| Follow-up | What it would give | Why not now |
+| --- | --- | --- |
+| Custom Lovelace card | A thermal-comfort forecast strip | Separate frontend project |
+| Optional `weather` platform entity whose forecast temperatures are heat index | Stock weather-forecast card | Wrong domain; confuses condition vs perception |
+| Extra `*_forecast` sensors whose state is the next period | Glance/badge without `type: attribute` | Doubles entity count; Approach C |
+
+Optional community cards (ApexCharts, flex-table-card) can already plot or tabulate `forecast` because it is a list of dicts. Mention them in docs; do not depend on them.
 
 ## Calculation extraction
 
@@ -233,12 +321,13 @@ Existing async methods become one-line wrappers behind `compute_once_lock`. Form
 
 - Unit tests for `calculations.py` against known values already asserted in `tests/test_sensor.py` (e.g. 25 °C / 50 % RH → absolute humidity `11.5128065738593`).
 - Existing YAML/config-entry sensor tests continue to pass with no formula drift.
-- New tests: weather current values (including °F conversion), unavailable weather, YAML exclusive source, config flow `user` → `weather`, forecast attribute contents, skipped periods, `auto` preferring hourly, unrecorded attribute, sensor-mode sensors have no `forecast` key.
+- New tests: weather current values (including °F conversion), unavailable weather, YAML exclusive source, config flow `user` → `weather`, forecast attribute contents, `forecast_next` / `forecast_next_datetime` matching `forecast[0]`, skipped periods, `auto` preferring hourly, unrecorded attributes, sensor-mode sensors have no `forecast` / `forecast_next` keys.
 - Mock `weather.get_forecasts` by registering a test service; do not require a real weather platform.
 
 ## Documentation and translations
 
 - Update `documentation/yaml.md` and `documentation/config_flow.md`.
+- Document the three views: More Info, entities-card `forecast_next` example, Markdown forecast table example.
 - Add English strings in `custom_components/thermal_comfort/translations/en.json`. Other locales are filled later by Fink / inlang; Home Assistant falls back to English.
 
 ## Compatibility constraints

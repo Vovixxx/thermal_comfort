@@ -27,7 +27,7 @@
 - Create: `custom_components/thermal_comfort/calculations.py` — pure index functions + `calculate_sensor` dispatcher
 - Create: `tests/test_calculations.py` — formula contract without Home Assistant
 - Create: `tests/test_weather.py` — weather current values, forecasts, YAML exclusive source
-- Modify: `custom_components/thermal_comfort/const.py` — `CONF_WEATHER_ENTITY`, `CONF_FORECAST_TYPE`, forecast-type constants, feature flags
+- Modify: `custom_components/thermal_comfort/const.py` — `CONF_WEATHER_ENTITY`, `CONF_FORECAST_TYPE`, `ATTR_FORECAST`, `ATTR_FORECAST_NEXT`, `ATTR_FORECAST_NEXT_DATETIME`, forecast-type constants, feature flags
 - Modify: `custom_components/thermal_comfort/sensor.py` — schema, weather listeners, forecast attributes, thin wrappers over `calculations.py`
 - Modify: `custom_components/thermal_comfort/__init__.py` — copy weather keys into `hass.data`
 - Modify: `custom_components/thermal_comfort/config_flow.py` — `user` → `sensors` | `weather` steps; weather options flow
@@ -784,6 +784,8 @@ WEATHER_FORECAST_TWICE_DAILY = 4
 
 ATTR_FORECAST = "forecast"
 ATTR_FORECAST_TYPE = "forecast_type"
+ATTR_FORECAST_NEXT = "forecast_next"
+ATTR_FORECAST_NEXT_DATETIME = "forecast_next_datetime"
 ```
 
 - [ ] **Step 4: Relax YAML schema to exclusive sources**
@@ -1356,7 +1358,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `calculate_sensor(sensor_type, temperature, humidity)` from Task 1; `weather.get_forecasts` service; `FORECAST_TYPE_*` and `WEATHER_FORECAST_*` from Task 2
-- Produces: `DeviceThermalComfort._forecasts: dict[SensorType, list[dict]]`; sensor extra attribute `forecast`; unrecorded `forecast`; device extra `forecast_type` when resolved
+- Produces: `DeviceThermalComfort._forecasts: dict[SensorType, list[dict]]`; sensor extra attributes `forecast`, `forecast_next`, `forecast_next_datetime`; those three unrecorded; device extra `forecast_type` when resolved
 
 - [ ] **Step 1: Write failing forecast tests**
 
@@ -1364,7 +1366,12 @@ Append to `tests/test_weather.py`:
 
 ```python
 from custom_components.thermal_comfort.calculations import calculate_heat_index
-from custom_components.thermal_comfort.const import ATTR_FORECAST, ATTR_FORECAST_TYPE
+from custom_components.thermal_comfort.const import (
+    ATTR_FORECAST,
+    ATTR_FORECAST_NEXT,
+    ATTR_FORECAST_NEXT_DATETIME,
+    ATTR_FORECAST_TYPE,
+)
 from homeassistant.core import ServiceCall, SupportsResponse
 from homeassistant.helpers.typing import ServiceResponse
 
@@ -1415,13 +1422,23 @@ async def test_weather_forecast_attribute(hass, start_ha_weather):
     assert forecast[0]["temperature"] == 26.0
     assert forecast[0]["humidity"] == 55
     assert forecast[0]["value"] == pytest.approx(calculate_heat_index(26.0, 55.0))
+    assert heat.attributes[ATTR_FORECAST_NEXT] == pytest.approx(
+        calculate_heat_index(26.0, 55.0)
+    )
+    assert heat.attributes[ATTR_FORECAST_NEXT_DATETIME] == forecast[0]["datetime"]
     assert heat.attributes[ATTR_FORECAST_TYPE] == "hourly"
 
 
-@pytest.mark.parametrize(*WEATHER_YAML)
+# Add DEFAULT_TEST_SENSORS to the existing `from .test_sensor import ...` at the top of this file.
+
+
+@pytest.mark.parametrize(*DEFAULT_TEST_SENSORS)
 async def test_sensor_mode_has_no_forecast_attribute(hass, start_ha):
     """Temperature/humidity devices do not expose forecast."""
-    assert ATTR_FORECAST not in get_sensor(hass, SensorType.HEAT_INDEX).attributes
+    attrs = get_sensor(hass, SensorType.HEAT_INDEX).attributes
+    assert ATTR_FORECAST not in attrs
+    assert ATTR_FORECAST_NEXT not in attrs
+    assert ATTR_FORECAST_NEXT_DATETIME not in attrs
 
 
 def test_forecast_is_unrecorded():
@@ -1429,16 +1446,8 @@ def test_forecast_is_unrecorded():
     from custom_components.thermal_comfort.sensor import SensorThermalComfort
 
     assert ATTR_FORECAST in SensorThermalComfort._unrecorded_attributes
-```
-
-`test_sensor_mode_has_no_forecast_attribute` uses the existing `start_ha` fixture from `tests/test_sensor.py` (`DEFAULT_TEST_SENSORS`). Import `DEFAULT_TEST_SENSORS` and parametrize:
-
-```python
-from .test_sensor import DEFAULT_TEST_SENSORS, LEN_DEFAULT_SENSORS, get_sensor
-
-@pytest.mark.parametrize(*DEFAULT_TEST_SENSORS)
-async def test_sensor_mode_has_no_forecast_attribute(hass, start_ha):
-    assert ATTR_FORECAST not in get_sensor(hass, SensorType.HEAT_INDEX).attributes
+    assert ATTR_FORECAST_NEXT in SensorThermalComfort._unrecorded_attributes
+    assert ATTR_FORECAST_NEXT_DATETIME in SensorThermalComfort._unrecorded_attributes
 ```
 
 If `start_ha_weather` runs before the mock service exists, forecasts will be empty on first setup. Either register the mock service in `start_ha_weather` before `async_setup_component`, or after setup call `async_set_weather` again once the service exists (as above). Prefer registering the mock **inside** `start_ha_weather` before setup so the initial fetch works:
@@ -1623,18 +1632,31 @@ On `SensorThermalComfort`:
 class SensorThermalComfort(SensorEntity):
     """Representation of a Thermal Comfort Sensor."""
 
-    _unrecorded_attributes = frozenset({ATTR_FORECAST})
+    _unrecorded_attributes = frozenset(
+        {ATTR_FORECAST, ATTR_FORECAST_NEXT, ATTR_FORECAST_NEXT_DATETIME}
+    )
 ```
 
 In `async_update`, after setting `_attr_native_value`:
 
 ```python
         if self._device.weather_entity:
-            self._attr_extra_state_attributes[ATTR_FORECAST] = (
-                self._device.forecasts.get(self._sensor_type, [])
-            )
+            forecast = self._device.forecasts.get(self._sensor_type, [])
+            self._attr_extra_state_attributes[ATTR_FORECAST] = forecast
+            if forecast:
+                self._attr_extra_state_attributes[ATTR_FORECAST_NEXT] = forecast[0][
+                    "value"
+                ]
+                self._attr_extra_state_attributes[ATTR_FORECAST_NEXT_DATETIME] = (
+                    forecast[0]["datetime"]
+                )
+            else:
+                self._attr_extra_state_attributes.pop(ATTR_FORECAST_NEXT, None)
+                self._attr_extra_state_attributes.pop(ATTR_FORECAST_NEXT_DATETIME, None)
         else:
             self._attr_extra_state_attributes.pop(ATTR_FORECAST, None)
+            self._attr_extra_state_attributes.pop(ATTR_FORECAST_NEXT, None)
+            self._attr_extra_state_attributes.pop(ATTR_FORECAST_NEXT_DATETIME, None)
 ```
 
 Add properties on `DeviceThermalComfort`:
@@ -1714,7 +1736,36 @@ Document:
 - `temperature_sensor` / `humidity_sensor` remain required **unless** `weather_entity` is set.
 - Mixing `weather_entity` with either sensor on the same device is invalid.
 
-Add a short "Forecast attribute" note: weather-mode sensors include `forecast`, a list of `{datetime, temperature, humidity, value}` (plus the same extra keys the current sensor already has). `forecast` is not recorded in history.
+Add a **Viewing the forecast** section. State that the stock Weather forecast card only accepts `weather.*` entities and cannot show these sensors. Then include these two copy-paste Lovelace examples (entity ids assume a device named Outside):
+
+```yaml
+type: entities
+title: Outside heat index
+entities:
+  - entity: sensor.outside_heat_index
+    name: Now
+  - type: attribute
+    entity: sensor.outside_heat_index
+    attribute: forecast_next
+    name: Next
+  - type: attribute
+    entity: sensor.outside_heat_index
+    attribute: forecast_next_datetime
+    name: Next at
+```
+
+```yaml
+type: markdown
+title: Outside heat index forecast
+content: |
+  | When | Heat index |
+  | --- | --- |
+  {% for item in state_attr('sensor.outside_heat_index', 'forecast') or [] %}
+  | {{ as_datetime(item.datetime).astimezone().strftime('%-I:%M %p') }} | {{ item.value | round(1) }} |
+  {% endfor %}
+```
+
+Also note: More Info on the sensor lists the full `forecast` attribute with no extra dashboard work. ApexCharts / flex-table-card can plot the same list but are not required.
 
 - [ ] **Step 2: Update config-flow docs**
 
@@ -1742,6 +1793,6 @@ EOF
 
 ## Plan self-review
 
-1. **Spec coverage:** Weather current values (Task 2), YAML exclusive source (Task 2), config flow (Task 3), forecasts + unrecorded attribute (Task 4), docs (Task 5), calculation reuse (Task 1). Non-goals (no new indices, no mode switch, no recorder writes) are respected.
-2. **Placeholders:** None. Formulas, schemas, unique IDs, service call, and test names are specified.
-3. **Types:** `CONF_WEATHER_ENTITY`, `CONF_FORECAST_TYPE`, `ATTR_FORECAST`, `calculate_sensor(sensor_type, temperature, humidity)`, `DeviceThermalComfort.forecasts`, unique ID `weather-{id}` are named the same in every task.
+1. **Spec coverage:** Weather current values (Task 2), YAML exclusive source (Task 2), config flow (Task 3), forecasts + `forecast_next` viewing attributes (Task 4), More Info / entities card / Markdown docs (Task 5), calculation reuse (Task 1). Non-goals (no new indices, no mode switch, no recorder writes, no custom card, no weather platform) are respected.
+2. **Placeholders:** None. Formulas, schemas, unique IDs, service call, viewing YAML, and test names are specified.
+3. **Types:** `CONF_WEATHER_ENTITY`, `CONF_FORECAST_TYPE`, `ATTR_FORECAST`, `ATTR_FORECAST_NEXT`, `ATTR_FORECAST_NEXT_DATETIME`, `calculate_sensor(sensor_type, temperature, humidity)`, `DeviceThermalComfort.forecasts`, unique ID `weather-{id}` are named the same in every task.
