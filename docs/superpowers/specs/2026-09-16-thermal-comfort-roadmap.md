@@ -2,9 +2,11 @@
 
 **Date:** 2026-09-16
 
-This integration expands temperature + humidity into extra comfort sensors. Ideas around weather input, device ownership, forecasts, and later **home advice** (windows, what to wear) showed up at once. They are related, but they are **not one change**. Shipping them together would be a rewrite. They sit on separate shelves and get designed and built one at a time.
+This integration is named **Thermal Comfort**. Today that mostly means extra indices on T+H. The longer idea is still comfort of the home: indoor air, outdoor air, windows, what the weather asks of a person. Those later slices use the indices; they are not a different product name.
 
-The long arc is data first, then an assistant layer: take indoor comfort, outdoor comfort, and weather, and spit out a small result (open the window, take a coat). That layer is last. Stages 1–3 only make the data exist.
+Ideas around weather input, device ownership, forecasts, windows, and clothing/rain advice showed up at once. They are **not one change**. They sit on separate shelves.
+
+**Data first, then comfort advice.** Stages 1–3 make the numbers and texts exist. Window and clothing advice sit on top and come last. Advice is on-demand (look at the sensor whenever), not a morning briefing.
 
 ## Mental model (where this is heading)
 
@@ -24,7 +26,7 @@ That direction is real. It is also a Home Assistant device-registry problem, a m
 | **2** | Device linking | Future request | Attach comfort sensors to the source device; default name from that device. |
 | **3** | Forecasts | Future request | Compute the same indices for weather forecast periods; decide how to expose them after Stage 1 exists. |
 | **4** | Window advisor | Future request | Suggest open / close / close later from indoor vs outdoor comfort (and forecast). |
-| **5** | Morning briefing | Future request | One morning result: umbrella, raincoat, dress warm, etc. |
+| **5** | Clothing / rain advice | Future request | On-demand outdoor suggestion: umbrella, raincoat, dress warm — not a morning digest. |
 | — | Expected vs actual | Parked idea | Compare what was forecast with what happened. Needs Stage 3 first. Do not design yet. |
 
 ## Stage 1 — do this, merge this
@@ -39,7 +41,7 @@ One additive feature on the current architecture. No formula changes. No entity 
 - Device linking: `docs/superpowers/specs/2026-09-16-device-linking-future.md`
 - Forecasts: `docs/superpowers/specs/2026-09-16-weather-forecast-future.md`
 - Window advisor: `docs/superpowers/specs/2026-09-16-window-advisor-future.md`
-- Morning briefing: `docs/superpowers/specs/2026-09-16-morning-briefing-future.md`
+- Clothing / rain advice: `docs/superpowers/specs/2026-09-16-clothing-advice-future.md`
 
 Open those only when Stage 1 is in use and the next slice is chosen. Each gets its own design pass before code.
 
@@ -49,4 +51,4 @@ Open those only when Stage 1 is in use and the next slice is chosen. Each gets i
 - Custom Lovelace cards
 - A Thermal Comfort `weather` platform just to feed the stock forecast card
 - Forecast-type pickers, extra `*_forecast` entities, expected-vs-actual
-- Window open/close suggestions, morning clothing/rain briefing, or any “assistant” output sensor
+- Window open/close suggestions, clothing/rain advice sensors, or any timed “briefing”

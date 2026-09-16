@@ -19,7 +19,7 @@
 - Weather entity **or** both T/H sensors, never both
 - English translations only
 - Follow existing Home Assistant style in this repo
-- Do not implement Stage 2 (device linking), Stage 3 (forecasts), Stage 4 (windows), or Stage 5 (morning briefing)
+- Do not implement Stage 2 (device linking), Stage 3 (forecasts), Stage 4 (windows), or Stage 5 (clothing/rain advice)
 
 ## File map
 

@@ -53,4 +53,4 @@ Until the data layers exist, a user can already approximate this with automation
 
 - Rewriting core indices
 - Device linking (Stage 2)
-- Morning clothing briefing (separate shelf)
+- Clothing / rain advice (separate shelf)
