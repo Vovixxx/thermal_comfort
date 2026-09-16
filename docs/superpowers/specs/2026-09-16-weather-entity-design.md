@@ -2,124 +2,67 @@
 
 **Date:** 2026-09-16
 **Status:** Draft for implementation
-**Related:** [dolezsa/thermal_comfort#231](https://github.com/dolezsa/thermal_comfort/issues/231) (weather entity as input), [dolezsa/thermal_comfort#412](https://github.com/dolezsa/thermal_comfort/issues/412) (`weather.home` cannot be used as a temperature/humidity sensor)
+**Related:** [dolezsa/thermal_comfort#231](https://github.com/dolezsa/thermal_comfort/issues/231), [dolezsa/thermal_comfort#412](https://github.com/dolezsa/thermal_comfort/issues/412)
 
-## Problem
+## What this integration already does
 
-Thermal Comfort currently requires two `sensor` entities: a temperature sensor and a humidity sensor. Home Assistant weather entities already expose both values as **state attributes** (`temperature`, `humidity`) and can also provide **forecasts** via `weather.get_forecasts`.
+Thermal Comfort takes **temperature + humidity** and expands them into extra sensors: dew point, frost risk, heat index, and the text perceptions people actually glance at ("comfortable", "a bit dry for some", "probable frost").
 
-Two gaps follow from that:
+That is useful indoors. Outdoors, the same T+H already live on a `weather.*` entity (Met.no, Open-Meteo, and so on). Today you have to copy those two attributes into helper sensors, then feed the helpers into this integration. The helpers are busywork. And even after that, you only get **now** — not "what will it feel like later." Many weather providers never ship these comfort texts at all. That is the gap this feature fills.
 
-1. **Current values cannot be read from a weather entity.** The calculator treats the source entity *state* as a float. A weather entity's state is a condition string (`sunny`, `clear-night`), so setup with `weather.home` logs "invalid value" and never produces sensors ([#412](https://github.com/dolezsa/thermal_comfort/issues/412)).
-2. **Projected (forecast) thermal comfort is unavailable.** Users who want tomorrow's heat index, frost risk, or dew-point perception must build template sensors from forecast data themselves ([#231](https://github.com/dolezsa/thermal_comfort/issues/231)).
+## Simple product
 
-This feature adds a first-class weather-entity source that produces the same thermal-comfort sensors as today, plus projected values from the weather forecast.
+Same virtual device. Same sensors. Two changes:
 
-## Goals
+1. **You can point it at a weather entity** instead of two helpers. Current T+H come from the weather attributes. The sensors you already know keep working.
+2. **Those same sensors also know the next stretch of weather.** Each one keeps a forecast list, and a single `forecast_next` value so "what to expect" is one attribute, especially on the text sensors.
 
-- A user can create a Thermal Comfort device from a single `weather.*` entity.
-- That device produces the **current** thermal-comfort sensors using the weather entity's current `temperature` and `humidity` attributes.
-- Each of those sensors also exposes **projected** values for every forecast period that includes both temperature and humidity.
-- Existing temperature-plus-humidity config entries, YAML, unique IDs, and calculation results stay unchanged.
-- Sensor-based and weather-based sources are mutually exclusive on one device.
-
-## Non-goals
-
-- Combining a weather entity with extra temperature/humidity sensors on the same device.
-- Switching an existing sensor-based config entry to weather (or the reverse) in the options flow.
-- New sensor types, new thermal indices, or wind-chill / wet-bulb formulas.
-- Using weather `dew_point` or `apparent_temperature` instead of calculating our own.
-- Recording forecast attributes in the recorder (forecasts are future-valued and high-cardinality).
-- Fetching forecasts more often than the weather entity updates (or the existing poll interval).
-- A custom Lovelace card, a new `weather` platform entity, or extra `*_forecast` sensors. The built-in weather-forecast card only accepts `weather.*` entities; v1 does not add one.
-
-## Approaches considered
-
-### A. Weather source + forecast attributes on existing sensors (recommended)
-
-Add an optional weather-entity source. Current sensors stay the same entities (`dew_point`, `heat_index`, …). Each sensor gains a `forecast` extra state attribute: a list of `{datetime, temperature, humidity, value, …}` dicts.
-
-- **Pros:** No entity explosion (still one virtual device and the same 16 sensor types). Automations and custom cards can read `state_attr('sensor.outside_heat_index', 'forecast')`. Matches how weather entities themselves used to expose forecasts.
-- **Cons:** Native HA history graphs cannot plot the future. The built-in weather-forecast card cannot render these sensors. Viewing is More Info, entity-attribute rows for the next period, and a documented Markdown table (see [Viewing](#viewing)).
-
-### B. Weather source for current values only
-
-Read `temperature` / `humidity` attributes from a weather entity and stop there.
-
-- **Pros:** Smallest change; fixes #412.
-- **Cons:** Does not deliver projected values, which is half of this feature and the main reason #231 asked for weather support.
-
-### C. Extra forecast entities per index
-
-Create additional sensors such as `heat_index_forecast` whose state is the next period and whose attributes are the rest of the horizon.
-
-- **Pros:** Slightly easier to put "next hour's heat index" on a dashboard as a state.
-- **Cons:** Doubles entity count; unique-id and enablement UI get more complex; still needs an attribute list for the full horizon. YAGNI relative to A.
-
-**Decision:** Approach A.
-
-## Architecture
+No new sensor types. No extra `*_forecast` entities. No custom card. No fake weather entity. Indoor devices stay exactly as they are.
 
 ```text
-                    ┌─────────────────────────┐
-                    │  weather.forecast_home  │
-                    │  state: sunny           │
-                    │  attrs: temperature,    │
-                    │         humidity,       │
-                    │         temperature_unit│
-                    └───────────┬─────────────┘
-                                │
-          state_changed         │  weather.get_forecasts
-                                │
-                    ┌───────────▼─────────────┐
-                    │  DeviceThermalComfort   │
-                    │  current: T, RH         │
-                    │  forecasts: list[T, RH] │
-                    └───────────┬─────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              ▼                 ▼                 ▼
-        dew_point          heat_index      frost_risk  …
-        state: current     state: current  state: current
-        forecast_next      forecast_next   forecast_next
-        forecast: [...]    forecast: [...] forecast: [...]
+weather.forecast_home          indoor T + RH sensors
+        │                              │
+        ▼                              ▼
+   Thermal Comfort                Thermal Comfort
+   virtual device                 virtual device
+        │                              │
+        ▼                              ▼
+   dew point, frost risk,         same sensors,
+   "comfortable", …               current only
+   (now + forecast_next)
 ```
 
-Two input modes, one compute device:
+## What we are not doing
 
-| Mode | Current T / RH | Projected T / RH |
-| --- | --- | --- |
-| Sensors (existing) | Source sensor states | None (`forecast` omitted or `[]`) |
-| Weather (new) | Weather entity attributes | `weather.get_forecasts` periods that include both temperature and humidity |
+- Helper sensors (the point is to delete them)
+- Mixing weather + T/H sensors on one device
+- Switching an existing device from sensors to weather in options (create a new device)
+- A forecast-type picker — pick hourly if the weather entity has it, otherwise daily
+- Custom Lovelace cards, a `weather` platform, or expected-vs-actual tracking (interesting later, not this change)
+- Changing any calculation formula
 
-Index math is extracted into pure functions in `calculations.py` so current and forecast paths share one implementation. `DeviceThermalComfort` keeps the Home Assistant lifecycle (listeners, polling, shutdown, availability).
+## Setup (one form, same as today)
 
-## Configuration
+Keep the current config screen. Add one optional field:
 
-### Config flow
+- **Weather entity** (optional)
+- Temperature sensor and humidity sensor stay on the form
 
-Two-step UI. Step one is always available, even when no temperature/humidity sensors exist (so weather-only installs can set up the integration).
+Rules:
 
-1. **`user`:** `name`, `input_source` (`sensors` or `weather`). `input_source` is flow-only and is **not** stored on the config entry.
-2. **`sensors`:** existing temperature + humidity selectors, plus advanced options. Unique ID remains `{temperature_unique_id}-{humidity_unique_id}`.
-3. **`weather`:** weather-entity selector (`domain: weather`) and `forecast_type` (`auto`, `hourly`, `daily`, `twice_daily`). Unique ID is `weather-{weather_unique_id}` (fallback: `weather-{entity_id}`). Abort if that unique ID is already configured.
+- Weather entity **or** both sensors, not both, not neither.
+- Unique ID for weather devices: `weather-{weather unique_id}` (fallback `weather-{entity_id}`).
+- Sensor devices keep `{temp unique_id}-{humidity unique_id}`.
+- Config entry version stays 2. Missing `weather_entity` means today's sensor mode.
+- Options flow shows the same source the device was created with.
 
-Advanced options (`poll`, `scan_interval`, `custom_icons`, `enabled_sensors`) appear on the second step, same as today.
-
-**Options flow:** follow the mode already stored on the entry. Sensor entries keep today's schema. Weather entries show weather entity + forecast type + advanced options. No mode switch.
-
-**Validation:** the weather entity must exist as a state. Missing current `temperature` / `humidity` does not block setup; sensors stay unavailable until both attributes are numeric and in range (same policy as missing source sensors).
-
-### YAML
-
-A device is valid if it has **either** `weather_entity` **or** both `temperature_sensor` and `humidity_sensor`. Mixing them on one device is a config error.
+YAML:
 
 ```yaml
 thermal_comfort:
   - sensor:
     - name: Outside
       weather_entity: weather.forecast_home
-      forecast_type: auto   # optional, default auto
       unique_id: 7c2e0b5a-4d11-4f0c-9c3e-weather-outside
     - name: Living Room
       temperature_sensor: sensor.temperature_livingroom
@@ -127,213 +70,83 @@ thermal_comfort:
       unique_id: 2f842c63-051a-4c49-9da2-4f04ee677514
 ```
 
-`forecast_type` is ignored for sensor-mode devices.
-
-### Stored config keys
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `name` | yes | | Existing |
-| `temperature_sensor` | sensor mode | | Existing |
-| `humidity_sensor` | sensor mode | | Existing |
-| `weather_entity` | weather mode | | New |
-| `forecast_type` | weather mode | `auto` | New: `auto` \| `hourly` \| `daily` \| `twice_daily` |
-| `poll`, `scan_interval`, `custom_icons`, `enabled_sensors` | no | existing defaults | Unchanged |
-
-Config entry `VERSION` stays **2**. Weather keys are additive; missing `weather_entity` means sensor mode.
+If there are no T/H sensors but there is a weather entity, the form still opens (today it aborts). If there is neither, abort as today.
 
 ## Current values from weather
 
-Weather entities store measurements as attributes, not as state.
+A weather entity's **state** is `sunny` / `clear-night`. Temperature and humidity are **attributes**. That is why pointing the existing temperature picker at `weather.home` fails.
 
-- Temperature: `state.attributes["temperature"]`, unit from `state.attributes["temperature_unit"]` (fallback: `hass.config.units.temperature_unit`). Convert to Celsius with `TemperatureConverter`, then apply the existing range check `-89.2 … 56.7`.
-- Humidity: `state.attributes["humidity"]`, range `0 < humidity <= 100` (existing).
-- Invalid / `unknown` / `unavailable` weather state: `_temperature` and `_humidity` become `None`, sensors become `available=False` (existing lifecycle).
-- `extra_state_attributes["temperature"]` stores the value in the weather entity's presentation unit, matching how sensor mode stores the source sensor's native value.
-- Subscribe with `async_track_state_change_event` on the weather entity; unsubscribe in `async_shutdown` (already used by the runtime device).
+Read:
 
-## Projected values from forecasts
+- `temperature` + `temperature_unit` (convert to °C, same range check as now)
+- `humidity` (same 0–100 check as now)
 
-### Fetching
+Unavailable weather → sensors unavailable, same as a dead indoor sensor.
 
-Call Home Assistant's `weather.get_forecasts` service (`blocking=True`, `return_response=True`) with `type` set to the resolved forecast type. This API exists in Home Assistant >= 2023.12.0, which is already this integration's minimum.
+## Forecast
 
-Refresh forecasts:
+On weather-entity updates (and on poll if polling is on), call `weather.get_forecasts`. Use hourly if `supported_features` includes it, else daily, else twice-daily. No user setting.
 
-- when the weather entity state changes, and
-- on the poll interval when `poll: true`.
+For each period that has both temperature and humidity, run the same calculations we already run for "now." Skip incomplete periods.
 
-If the service fails or returns no list, log a warning and keep the last successful forecast. Never make current sensors unavailable because a forecast fetch failed.
+Each weather-mode sensor then has:
 
-### Resolving `forecast_type`
+| Piece | What it is |
+| --- | --- |
+| **state** | Current value (number or perception text). This is what you already put on a dashboard. |
+| **`forecast_next`** | The next period's value. The convenient "what to expect." |
+| **`forecast_next_datetime`** | When that next value is for. |
+| **`forecast`** | Full list: `{datetime, temperature, humidity, value, …}` for automations and More Info. |
 
-Read `supported_features` from the weather entity state (bit flags: daily=1, hourly=2, twice_daily=4).
+If there is no usable forecast, omit `forecast_next` / `forecast_next_datetime` and set `forecast` to `[]`.
 
-- `auto`: hourly if supported, else twice-daily, else daily, else no forecasts (`[]`).
-- Explicit type: use it when the matching flag is set; otherwise `[]` and a warning. Current sensors still work.
+Sensor-mode devices do not get these attributes.
 
-### Computing a period
+Mark `forecast`, `forecast_next`, and `forecast_next_datetime` unrecorded so they do not fill the database.
 
-For each forecast dict:
+A forecast fetch failure must not blank the current sensors. Keep the last good forecast and log a warning.
 
-1. Skip if `temperature` or `humidity` is missing or not numeric.
-2. Convert temperature to Celsius using the weather entity's `temperature_unit`.
-3. Apply the same range checks as current values; skip out-of-range periods.
-4. For daily / twice-daily periods, use `temperature` (the period high). Do not average with `templow`.
-5. Run every enabled sensor type's pure calculation on that (T, RH) pair.
+Do not invent expected-vs-actual history in this change. Current sensor history already records what actually happened; forecast attributes are the prediction.
 
-### Attribute shape
+## How you actually use it
 
-Each weather-mode thermal-comfort sensor adds:
+You already know the indoor pattern: put `dew_point_perception` and `frost_risk` on a dashboard. Outdoor weather mode is the same cards, fed by Met.no / Open-Meteo instead of helpers.
 
-```yaml
-forecast_next: 24.12
-forecast_next_datetime: "2026-09-16T15:00:00+00:00"
-forecast:
-  - datetime: "2026-09-16T15:00:00+00:00"
-    temperature: 26.0          # weather presentation unit
-    humidity: 55
-    value: 24.12               # this sensor's native value (or perception string)
-    # plus the same extra keys the current sensor already exposes, e.g. dew_point
-```
+**Now** is the sensor state. **Next** is `forecast_next` — one extra row on an entities card, or one attribute in an automation (`if frost_risk forecast_next is high`). The text sensors are the ones that matter most here.
 
-`datetime` is copied from the weather forecast (`datetime` key). Periods without `datetime` are skipped.
+The full `forecast` list is there when you open More Info or when a template/automation wants the whole horizon. That is enough. We are not building a forecast strip.
 
-`forecast_next` / `forecast_next_datetime` are `forecast[0].value` / `forecast[0].datetime`. If `forecast` is empty, omit both keys (do not set `None`).
+## Calculations
 
-Device-level extra attribute `forecast_type` records the resolved type (`hourly` / `daily` / `twice_daily`) or is omitted when no forecast is available.
+Share one implementation between current and forecast. Move the existing formulas into `calculations.py` as pure functions `(temperature_c, humidity) -> value`. Wrappers on `DeviceThermalComfort` stay so current behavior does not change. Formulas must not change; existing numeric tests are the contract.
 
-Sensor-mode devices do not set `forecast`, `forecast_next`, or `forecast_next_datetime`.
-
-### Recorder
-
-Mark forecast attributes as unrecorded on `SensorThermalComfort`:
-
-```python
-_unrecorded_attributes = frozenset({
-    "forecast",
-    "forecast_next",
-    "forecast_next_datetime",
-})
-```
-
-Hourly lists and sliding "next" values must not inflate the database.
-
-## Viewing
-
-Home Assistant has no built-in card that turns a sensor's `forecast` list into a weather-style strip. The stock **Weather forecast** card only accepts `weather.*` entities. v1 therefore ships three views, all using Approach A data — no extra entities.
-
-```text
-┌─────────────────────────────────────────────┐
-│  Heat index                        28.3 °C  │  ← entity state = current
-│  Next                              31.1 °C  │  ← type: attribute / forecast_next
-│  Next at            2026-09-16T16:00:00Z    │  ← forecast_next_datetime
-└─────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────┐
-│  When (local)          Heat index           │  ← Markdown card looping forecast
-│  4:00 PM               31.1                 │
-│  5:00 PM               29.4                 │
-│  6:00 PM               27.0                 │
-└─────────────────────────────────────────────┘
-```
-
-### 1. More Info (automatic)
-
-Opening any weather-mode sensor shows `forecast`, `forecast_next`, and `forecast_next_datetime` in the attributes panel. This is the zero-config view. A 48-row hourly list is readable, not pretty.
-
-### 2. Entities card — current vs next (built-in Lovelace)
-
-`forecast_next` is a scalar, so the stock entities card `type: attribute` row can show it next to the current state. No templates, no HACS.
-
-```yaml
-type: entities
-title: Outside heat index
-entities:
-  - entity: sensor.outside_heat_index
-    name: Now
-  - type: attribute
-    entity: sensor.outside_heat_index
-    attribute: forecast_next
-    name: Next
-  - type: attribute
-    entity: sensor.outside_heat_index
-    attribute: forecast_next_datetime
-    name: Next at
-```
-
-Repeat for any other enabled index (`dew_point`, `frost_risk`, perception sensors, …). Perception sensors use the same pattern; `forecast_next` is the perception string.
-
-### 3. Markdown table — full horizon (built-in Lovelace)
-
-Document this copy-paste card in `documentation/yaml.md`. It is the v1 full-horizon view.
-
-```yaml
-type: markdown
-title: Outside heat index forecast
-content: |
-  | When | Heat index |
-  | --- | --- |
-  {% for item in state_attr('sensor.outside_heat_index', 'forecast') or [] %}
-  | {{ as_datetime(item.datetime).astimezone().strftime('%-I:%M %p') }} | {{ item.value | round(1) }} |
-  {% endfor %}
-```
-
-For perception sensors, drop `| round(1)` and print `item.value` as text.
-
-### Out of scope for v1 (follow-ups)
-
-| Follow-up | What it would give | Why not now |
-| --- | --- | --- |
-| Custom Lovelace card | A thermal-comfort forecast strip | Separate frontend project |
-| Optional `weather` platform entity whose forecast temperatures are heat index | Stock weather-forecast card | Wrong domain; confuses condition vs perception |
-| Extra `*_forecast` sensors whose state is the next period | Glance/badge without `type: attribute` | Doubles entity count; Approach C |
-
-Optional community cards (ApexCharts, flex-table-card) can already plot or tabulate `forecast` because it is a list of dicts. Mention them in docs; do not depend on them.
-
-## Calculation extraction
-
-Move the bodies of `DeviceThermalComfort` index methods into `custom_components/thermal_comfort/calculations.py` as synchronous functions:
-
-```python
-def calculate_dew_point(temperature: float, humidity: float) -> float: ...
-def calculate_dew_point_perception(temperature: float, humidity: float) -> tuple[DewPointPerception, dict]: ...
-```
-
-A dispatcher `calculate_sensor(sensor_type, temperature, humidity)` is used by the forecast loop.
-
-Existing async methods become one-line wrappers behind `compute_once_lock`. Formulas must not change; existing numeric tests remain the contract.
-
-## Error handling
+## Errors
 
 | Situation | Behavior |
 | --- | --- |
-| Weather entity missing at config time | Form error `weather_not_found` |
-| Weather entity missing at runtime | Sensors unavailable |
-| Weather has no current humidity/temperature | Sensors unavailable; log info (same tone as invalid source sensors) |
-| Forecast period missing humidity | Skip that period |
-| `get_forecasts` raises / empty | Warning; keep last forecast; current values unchanged |
-| Requested forecast type unsupported | Warning; `forecast` empty; current values unchanged |
-| YAML mixes weather and sensors | Voluptuous invalid config |
+| Weather entity missing at config time | Field error `weather_not_found` |
+| Form submitted with both weather and sensors, or neither | Form error `need_weather_or_sensors` |
+| Weather missing at runtime | Sensors unavailable |
+| Period missing humidity or temperature | Skip that period |
+| `get_forecasts` fails | Warning; keep last forecast; current values stay |
 | Duplicate weather unique ID | Abort `already_configured` |
 
-## Testing
+## Tests (minimum)
 
-- Unit tests for `calculations.py` against known values already asserted in `tests/test_sensor.py` (e.g. 25 °C / 50 % RH → absolute humidity `11.5128065738593`).
-- Existing YAML/config-entry sensor tests continue to pass with no formula drift.
-- New tests: weather current values (including °F conversion), unavailable weather, YAML exclusive source, config flow `user` → `weather`, forecast attribute contents, `forecast_next` / `forecast_next_datetime` matching `forecast[0]`, skipped periods, `auto` preferring hourly, unrecorded attributes, sensor-mode sensors have no `forecast` / `forecast_next` keys.
-- Mock `weather.get_forecasts` by registering a test service; do not require a real weather platform.
+- Weather current values match today's 25 °C / 50 % RH numbers (including a °F weather entity).
+- Unavailable weather → sensors unavailable.
+- YAML and config flow reject mixed/missing sources; weather-only setup works; existing sensor flow still works.
+- Forecast list skips incomplete periods; `forecast_next` equals `forecast[0].value`.
+- Sensor-mode sensors have no forecast attributes.
+- Existing `tests/test_sensor.py` numbers do not change.
 
-## Documentation and translations
+## Docs and translations
 
-- Update `documentation/yaml.md` and `documentation/config_flow.md`.
-- Document the three views: More Info, entities-card `forecast_next` example, Markdown forecast table example.
-- Add English strings in `custom_components/thermal_comfort/translations/en.json`. Other locales are filled later by Fink / inlang; Home Assistant falls back to English.
+- `documentation/yaml.md` and `documentation/config_flow.md`: weather field, XOR rule, `forecast` / `forecast_next`.
+- English strings only in `en.json`.
 
-## Compatibility constraints
+## Constraints
 
-- Home Assistant >= 2023.12.0
+- Home Assistant >= 2023.12.0 (`weather.get_forecasts` already exists at this floor)
 - Python >= 3.11.0
-- Do not change calculation formulas
-- Do not change unique IDs of existing sensor-mode entities
-- Follow Home Assistant development guidelines already used by this repo
+- Do not change calculation formulas or existing sensor-mode unique IDs
