@@ -19,7 +19,7 @@
 - Weather entity **or** both T/H sensors, never both
 - English translations only
 - Follow existing Home Assistant style in this repo
-- Do not implement Stage 2 (device linking), Stage 3 (forecasts), Stage 4 (windows), or Stage 5 (clothing/rain advice)
+- Do not implement later stages (device linking, forecasts, global/zones, windows/doors, clothing advice)
 
 ## File map
 
@@ -475,6 +475,6 @@ EOF
 
 ## Plan self-review
 
-1. **Spec coverage:** Stage 1 only (weather as current T/H). Device linking and forecasts are other files, not tasks here.
+1. **Spec coverage:** Stage 1 only (weather **or** separate T/H on one device). Global/zone graph, device linking, forecasts, and advice are other files.
 2. **Placeholders:** None for Stage 1. Formula extract, `forecast_next`, and `via_device` are intentionally absent.
 3. **Types:** `CONF_WEATHER_ENTITY` is the only new stored key. Unique ID `weather-{id}`.

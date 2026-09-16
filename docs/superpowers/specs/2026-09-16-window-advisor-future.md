@@ -2,12 +2,14 @@
 
 **Date:** 2026-09-16  
 **Status:** Shelf only — do not implement  
-**Depends on:** Stage 1 (outdoor current from weather), indoor Thermal Comfort device, Stage 3 (forecasts) for timed advice  
+**Depends on:** Stage 1 (outdoor current), indoor zone devices, Stage 4 (zone → global) if we do not hard-code the pair, Stage 3 (forecasts) for timed advice  
 **Parent:** `docs/superpowers/specs/2026-09-16-thermal-comfort-roadmap.md`
 
 ## Intent
 
-Windows are manual. Home Assistant can still **suggest**: open them, close them, or close them in two hours. Indoor comfort, outdoor comfort, humidity, frost risk, and (later) the outdoor forecast are the inputs. The output is one clear instruction, not another wall of indices.
+Windows (and later **doors**) are manual and belong to a **room**. Home Assistant can still **suggest**: open them, close them, or close them in two hours. The comparison is **this zone vs the house global outdoor**, not each window picking its own weather entity.
+
+Indoor comfort, global outdoor comfort, humidity, frost risk, and (later) the outdoor forecast are the inputs. The output is one clear instruction, not another wall of indices.
 
 Examples of the kind of result:
 
@@ -23,11 +25,11 @@ Until the data layers exist, a user can already approximate this with automation
 
 ## Inputs (likely)
 
-- Indoor device: temperature, humidity, dew point / perception, maybe absolute humidity
-- Outdoor device (Stage 1 weather source): same indices
-- Weather condition / precipitation (from the weather entity)
+- Indoor **zone** device (the room)
+- House **global** outdoor device (weather *or* separate outdoor sensors)
+- Weather condition / precipitation when the global is weather-backed
 - Outdoor forecast (Stage 3) for “in two hours”
-- Optional: which window/cover entities exist — **advice can be text-only at first**; actually calling `cover.close` is a later choice
+- Window/door entities tied to that room later — **advice can be text-only at first**
 
 ## Output (not decided)
 
@@ -37,16 +39,17 @@ Until the data layers exist, a user can already approximate this with automation
 
 ## Open questions (answer in a future design)
 
-1. One advisor per indoor room, or one house-wide suggestion?
-2. Do we ever actuate covers, or only suggest? Default: **suggest only** (windows are manual).
-3. What beats what? Rain vs stuffy room vs outdoor pollen is policy, not math.
-4. “In two hours” is forecast-driven. Without Stage 3, only current open/close.
-5. Frost / mold / dew-on-glass: indoor dew point vs window surface is a different problem; do not smuggle it in without a spec.
+1. Advisor is **per room** (zone vs global). House-wide rollup is a later extra, not the default.
+2. Do we ever actuate covers, or only suggest? Default: **suggest only**.
+3. Door vs window: same suggestion sensor, or door means “leave this room / house”?
+4. What beats what? Rain vs stuffy room vs outdoor pollen is policy, not math.
+5. “In two hours” is forecast-driven. Without Stage 3, only current open/close.
+6. Frost / mold / dew-on-glass: indoor dew point vs window surface is a different problem; do not smuggle it in without a spec.
 
 ## Suggested shape when this shelf is opened
 
-- Own spec, plan, and PR.
-- Require an indoor Thermal Comfort device + an outdoor (weather) one.
+- Own spec, plan, and PR, after zones can refer to the global (Stage 4) or with an explicit outdoor device picker if Stage 4 is not done yet.
+- One suggestion per indoor zone. Tie window/door entities to that zone when we add them.
 - Ship a suggestion sensor before any service that closes covers.
 
 ## Out of scope even then

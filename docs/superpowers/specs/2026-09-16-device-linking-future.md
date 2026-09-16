@@ -14,6 +14,8 @@ Thermal Comfort is not a second gadget. It is extra measurements on something yo
 
 Today those comfort sensors sit on a separate virtual device named "Thermal Comfort". From the user's point of view that split is fake: T, H, dew point, and "comfortable" are one story. The later product should feel like a plugin that **expands the source device**. New sensors would live on that device, stay linked to it, and take its name by default (still overridable at setup).
 
+This composes with **global vs zones**: the house outdoor may be weather-backed or sensor-backed; rooms stay satellites. Linking is about *where entities live in the registry*, not about which outdoor a room compares to.
+
 ## Why this is not Stage 1
 
 Home Assistant devices belong to the integration that registered them. Putting custom-component entities onto another integration's device (or merging two source devices when T and H are not on the same physical device) needs device-registry research, unique-id policy, and a migration for every existing config entry. Doing it in the same PR as "read weather attributes" would turn a small additive feature into a rewrite.

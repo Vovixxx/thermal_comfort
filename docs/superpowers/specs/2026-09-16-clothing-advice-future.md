@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-16  
 **Status:** Shelf only — do not implement  
-**Depends on:** Stage 1 (outdoor current), Stage 3 (forecasts) when the advice should look ahead  
+**Depends on:** Stage 1 (global outdoor current), Stage 3 (forecasts) when the advice should look ahead  
 **Parent:** `docs/superpowers/specs/2026-09-16-thermal-comfort-roadmap.md`
 
 ## Intent
@@ -19,11 +19,12 @@ It needs outdoor comfort sensors first, and forecasts if “it will rain later�
 
 ## Inputs (likely)
 
-- Outdoor Thermal Comfort perceptions (heat, humidity, frost) — current, and forecast when Stage 3 exists
-- Weather entity: condition, precipitation (probability / amount), temperature
-- Horizon: “now” vs “the next few hours” — not “this morning’s briefing”
+- House **global** outdoor Thermal Comfort (weather *or* separate outdoor sensors)
+- That global’s perceptions (heat, humidity, frost) — current, and forecast when Stage 3 exists
+- Precipitation / condition from the weather entity when the global is weather-backed
+- Horizon: “now” vs “the next few hours” — not a morning briefing
 
-Indoor room comfort is probably **not** the main input (a coat is not chosen from the living-room dew point).
+Indoor **zones** are not the input (a coat is not chosen from the living-room dew point).
 
 ## Output (not decided)
 

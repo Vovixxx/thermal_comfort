@@ -13,9 +13,11 @@ The workaround is two helper sensors that copy those attributes. That is extra e
 
 ## Stage 1 product
 
-Add an optional **weather entity** field. If set, current T and H come from that entity's attributes. The integration still creates the same virtual device and the same comfort sensors as today.
+Add an optional **weather entity** field. If set, current T and H come from that entity's attributes. **Separate temperature and humidity sensors stay fully supported** — weather is another source, not a replacement for the sensor path. The integration still creates the same virtual device and the same comfort sensors as today.
 
-This stage does **not** attach sensors to the weather device, does **not** rename from the weather device, and does **not** compute forecasts.
+Typical use later: one **global** outdoor device (weather *or* outdoor T+H sensors) plus room devices on indoor sensors. Stage 1 does not wire rooms to that global; it only makes weather a valid source so you can stop using helper sensors.
+
+This stage does **not** attach sensors to the weather device, does **not** rename from the weather device, does **not** mark a device as global, and does **not** compute forecasts.
 
 ```text
 weather.forecast_home  ──►  Thermal Comfort virtual device  ──►  dew point, frost risk, "comfortable", …
