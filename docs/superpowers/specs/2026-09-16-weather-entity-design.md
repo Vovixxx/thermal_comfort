@@ -92,3 +92,4 @@ Do not call `weather.get_forecasts` in this stage.
 - Do not change formulas or existing sensor-mode unique IDs
 - Do not extract `calculations.py` until Stage 3 needs it
 - Do not add forecast attributes, extra entities, or device-registry linking
+- Do not add window/clothing advice sensors
